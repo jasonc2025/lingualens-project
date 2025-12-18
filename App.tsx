@@ -1,3 +1,4 @@
+"use client";
 import React, { useState, useCallback } from 'react';
 import { Uploader } from './components/Uploader';
 import { AnnotationOverlay } from './components/AnnotationOverlay';

@@ -6,10 +6,9 @@ import { Annotation } from "../types";
 const PROXY_URL = "https://gemini-proxy.jasoncmait.workers.dev";
 
 /**
- * 2. 基础请求函数 (使用 v1 版本)
+ * 2. 基础请求函数 (强制使用 v1 稳定版路径)
  */
 const callGeminiApi = async (modelName: string, payload: any) => {
-  // 刚才你手动访问 /v1/models 成功，所以这里必须用 v1
   const endpoint = `${PROXY_URL}/v1/models/${modelName}:generateContent`;
 
   const response = await fetch(endpoint, {
@@ -33,7 +32,7 @@ const callGeminiApi = async (modelName: string, payload: any) => {
 };
 
 /**
- * 3. 图像翻译主函数 (适配 Gemini 2.0)
+ * 3. 图像翻译主函数 (适配 v1 版本的字段名)
  */
 export const translateImageText = async (
   base64Image: string, 
@@ -54,9 +53,10 @@ export const translateImageText = async (
         }
       ]
     }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
+    // 【关键修复】：v1 稳定版必须使用下划线命名法
+    generation_config: { 
+      response_mime_type: "application/json",
+      response_schema: {
         type: "array",
         items: {
           type: "object",
@@ -72,7 +72,8 @@ export const translateImageText = async (
         }
       }
     },
-    systemInstruction: {
+    // 【关键修复】：改为下划线 system_instruction
+    system_instruction: {
       parts: [{
         text: "You are an expert OCR and translation assistant. Your goal is to accurately detect text and provide translations. Keep numbers and symbols exactly as they appear."
       }]
@@ -80,7 +81,7 @@ export const translateImageText = async (
   };
 
   try {
-    // 【关键】：使用你列表里确认存在的 gemini-2.0-flash
+    // 使用你列表中存在的 2.0 模型
     const data = await callGeminiApi("gemini-2.0-flash", payload);
     
     const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;

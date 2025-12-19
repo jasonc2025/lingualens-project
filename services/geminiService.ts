@@ -1,9 +1,21 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Annotation } from "../types";
 
-// Initialize Gemini Client
-// Note: We create a new client in the functions to ensure we always use the latest API KEY from env
-const getAiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * 获取 AI 客户端
+ * 适配 Vite 环境：使用 import.meta.env 替代 process.env
+ * 变量名推荐使用 VITE_API_KEY
+ */
+const getAiClient = () => {
+  // 优先读取 Vite 规范的变量，其次读取通用变量，最后为空字符串
+  const apiKey = import.meta.env.VITE_API_KEY || import.meta.env.API_KEY || "";
+  
+  if (!apiKey) {
+    console.error("Gemini API Key 缺失！请在 Cloudflare 后台设置 VITE_API_KEY 环境变量。");
+  }
+  
+  return new GoogleGenAI({ apiKey });
+};
 
 /**
  * Translates text in an image from English to Chinese and returns bounding boxes.
@@ -30,8 +42,8 @@ export const translateImageText = async (base64Image: string, mimeType: string =
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", // Best for OCR and structured data
-      contents: {
+      model: "gemini-2.0-flash", // 注意：如果你是免费版，请确认模型名称是否为 gemini-1.5-flash 或 2.0 版本
+      contents: [{
         parts: [
           {
             inlineData: {
@@ -43,7 +55,7 @@ export const translateImageText = async (base64Image: string, mimeType: string =
             text: "Identify all distinct text segments in this image. Translate English segments into Simplified Chinese. If a segment is purely numbers (e.g. '2024', '10.5') or symbols, keep the translation identical to the original. Return the result as a JSON list with bounding boxes (0-1000 scale)."
           }
         ]
-      },
+      }],
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
@@ -69,8 +81,8 @@ export const editImageWithPrompt = async (base64Image: string, prompt: string, m
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image", // Specialized for image generation/editing
-      contents: {
+      model: "gemini-2.0-flash", // 建议使用统一的模型名称
+      contents: [{
         parts: [
           {
             inlineData: {
@@ -82,10 +94,9 @@ export const editImageWithPrompt = async (base64Image: string, prompt: string, m
             text: prompt
           }
         ]
-      }
+      }]
     });
 
-    // Check for image in response parts
     if (response.candidates?.[0]?.content?.parts) {
       for (const part of response.candidates[0].content.parts) {
         if (part.inlineData && part.inlineData.data) {

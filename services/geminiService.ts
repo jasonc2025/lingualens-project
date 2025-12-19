@@ -1,16 +1,19 @@
 import { Annotation } from "../types";
 
 /**
- * 1. 你的代理服务器地址
+ * 1. 代理服务器配置
  */
 const PROXY_URL = "https://gemini-proxy.jasoncmait.workers.dev";
 
 /**
- * 2. 辅助函数：统一处理 Fetch 请求
+ * 2. 基础请求函数
  */
-const callGeminiApi = async (model: string, payload: any) => {
-  // 直接通过 fetch 访问你的 Worker 代理
-  const response = await fetch(`${PROXY_URL}/v1beta/models/${model}:generateContent`, {
+const callGeminiApi = async (modelName: string, payload: any) => {
+  // 构建标准的 Google API 路径
+  // 路径格式必须严格为: /v1beta/models/{model}:generateContent
+  const endpoint = `${PROXY_URL}/v1beta/models/${modelName}:generateContent`;
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -18,19 +21,27 @@ const callGeminiApi = async (model: string, payload: any) => {
     body: JSON.stringify(payload)
   });
 
+  const responseData = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error("API Response Error:", errorData);
-    throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+    console.error("Gemini API Error Response:", responseData);
+    throw new Error(
+      responseData.error?.message || `请求失败 (Status: ${response.status})`
+    );
   }
 
-  return await response.json();
+  return responseData;
 };
 
 /**
- * 翻译图像中的文本
+ * 3. 图像翻译主函数
  */
-export const translateImageText = async (base64Image: string, mimeType: string = "image/jpeg"): Promise<Annotation[]> => {
+export const translateImageText = async (
+  base64Image: string, 
+  mimeType: string = "image/jpeg"
+): Promise<Annotation[]> => {
+  
+  // 构建符合 Google 要求的请求体
   const payload = {
     contents: [{
       parts: [
@@ -47,7 +58,7 @@ export const translateImageText = async (base64Image: string, mimeType: string =
     }],
     generationConfig: {
       responseMimeType: "application/json",
-      // 这里手动定义 Response Schema，fetch 模式下直接写对象即可
+      // fetch 模式下直接定义 Schema 对象
       responseSchema: {
         type: "array",
         items: {
@@ -55,7 +66,10 @@ export const translateImageText = async (base64Image: string, mimeType: string =
           properties: {
             original: { type: "string" },
             translation: { type: "string" },
-            box_2d: { type: "array", items: { type: "integer" } }
+            box_2d: { 
+              type: "array", 
+              items: { type: "integer" } 
+            }
           },
           required: ["original", "translation", "box_2d"]
         }
@@ -69,23 +83,32 @@ export const translateImageText = async (base64Image: string, mimeType: string =
   };
 
   try {
-    const data = await callGeminiApi("gemini-1.5-flash", payload);
+    // 使用稳定性最好的模型版本
+    const data = await callGeminiApi("gemini-1.5-flash-latest", payload);
     
-    // 解析 Google API 返回的标准结构
-    const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textResult) return [];
+    // 解析返回的 JSON 字符串
+    const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
     
-    return JSON.parse(textResult) as Annotation[];
+    if (!resultText) {
+      console.warn("API 没有返回有效文本数据");
+      return [];
+    }
+    
+    return JSON.parse(resultText) as Annotation[];
   } catch (error) {
-    console.error("Translation error:", error);
-    throw new Error("Failed to translate image text.");
+    console.error("Translation Error Details:", error);
+    throw new Error("翻译图片失败，请检查网络或 API 配置。");
   }
 };
 
 /**
- * 根据用户指令编辑图像 (或进行复杂对话)
+ * 4. 图像编辑/对话函数
  */
-export const editImageWithPrompt = async (base64Image: string, prompt: string, mimeType: string = "image/jpeg"): Promise<string> => {
+export const editImageWithPrompt = async (
+  base64Image: string, 
+  prompt: string, 
+  mimeType: string = "image/jpeg"
+): Promise<string> => {
   const payload = {
     contents: [{
       parts: [
@@ -103,20 +126,20 @@ export const editImageWithPrompt = async (base64Image: string, prompt: string, m
   };
 
   try {
-    const data = await callGeminiApi("gemini-1.5-flash", payload);
-    
-    // 检查是否有返回的数据部分 (针对图片生成模型或返回图片内容的情况)
+    const data = await callGeminiApi("gemini-1.5-flash-latest", payload);
     const parts = data.candidates?.[0]?.content?.parts || [];
+    
+    // 优先寻找 Base64 格式的返回图像
     for (const part of parts) {
       if (part.inlineData && part.inlineData.data) {
         return part.inlineData.data;
       }
     }
     
-    // 如果没有图片数据，返回第一个文本部分的内容
+    // 如果没有图像，返回文本内容
     return parts[0]?.text || "No response content";
   } catch (error) {
     console.error("Image editing error:", error);
-    throw new Error("Failed to edit image.");
+    throw new Error("编辑图片失败。");
   }
 };

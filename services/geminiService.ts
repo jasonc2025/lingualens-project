@@ -1,123 +1,79 @@
 import { Annotation } from "../types";
 
-/**
- * 1. 代理服务器配置
- */
 const PROXY_URL = "https://gemini-proxy.jasoncmait.workers.dev";
 
 /**
- * 2. 基础请求函数 (强制使用 v1 稳定版路径)
+ * 基础请求函数 - 尝试切回 v1beta 
+ * 因为 v1beta 对 responseMimeType 等新特性的支持最完整
  */
 const callGeminiApi = async (modelName: string, payload: any) => {
-  const endpoint = `${PROXY_URL}/v1/models/${modelName}:generateContent`;
+  // 注意：这里改回了 v1beta
+  const endpoint = `${PROXY_URL}/v1beta/models/${modelName}:generateContent`;
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
   const responseData = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    console.error("Gemini API Error Response:", responseData);
-    throw new Error(
-      responseData.error?.message || `请求失败 (Status: ${response.status})`
-    );
+    console.error("Gemini API Error:", responseData);
+    throw new Error(responseData.error?.message || `Status: ${response.status}`);
   }
 
   return responseData;
 };
 
-/**
- * 3. 图像翻译主函数 (适配 v1 版本的字段名)
- */
-export const translateImageText = async (
-  base64Image: string, 
-  mimeType: string = "image/jpeg"
-): Promise<Annotation[]> => {
-  
+export const translateImageText = async (base64Image: string, mimeType: string = "image/jpeg"): Promise<Annotation[]> => {
   const payload = {
     contents: [{
       parts: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: base64Image
-          }
-        },
-        {
-          text: "Identify all distinct text segments in this image. Translate English segments into Simplified Chinese. If a segment is purely numbers or symbols, keep the translation identical to the original. Return the result as a JSON list with bounding boxes (0-1000 scale)."
-        }
+        { inlineData: { mimeType, data: base64Image } },
+        { text: "Identify all text segments in this image and translate English to Simplified Chinese. Return as a JSON list with bounding boxes [ymin, xmin, ymax, xmax]." }
       ]
     }],
-    // 【关键修复】：v1 稳定版必须使用下划线命名法
-    generation_config: { 
-      response_mime_type: "application/json",
-      response_schema: {
+    generationConfig: { // 1. 回到小驼峰
+      responseMimeType: "application/json",
+      responseSchema: {
         type: "array",
         items: {
           type: "object",
           properties: {
             original: { type: "string" },
             translation: { type: "string" },
-            box_2d: { 
-              type: "array", 
-              items: { type: "integer" } 
-            }
+            box_2d: { type: "array", items: { type: "integer" } }
           },
           required: ["original", "translation", "box_2d"]
         }
       }
     },
-    // 【关键修复】：改为下划线 system_instruction
-    system_instruction: {
-      parts: [{
-        text: "You are an expert OCR and translation assistant. Your goal is to accurately detect text and provide translations. Keep numbers and symbols exactly as they appear."
-      }]
+    systemInstruction: { // 2. 回到小驼峰
+      parts: [{ text: "You are an expert OCR and translation assistant." }]
     }
   };
 
   try {
-    // 使用你列表中存在的 2.0 模型
+    // 3. 使用 2.0 版本，这个模型通常在 v1beta 下功能最全
     const data = await callGeminiApi("gemini-2.0-flash", payload);
-    
     const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!resultText) {
-      console.warn("API 没有返回文本内容");
-      return [];
-    }
-    
-    return JSON.parse(resultText) as Annotation[];
+    return resultText ? JSON.parse(resultText) : [];
   } catch (error) {
-    console.error("Translation Error Details:", error);
-    throw new Error("翻译图片失败，请检查配置。");
+    console.error("Translation Error:", error);
+    throw new Error("翻译失败，请检查 API 版本兼容性。");
   }
 };
 
 /**
- * 4. 图像编辑/对话函数
+ * 编辑图像函数
  */
-export const editImageWithPrompt = async (
-  base64Image: string, 
-  prompt: string, 
-  mimeType: string = "image/jpeg"
-): Promise<string> => {
+export const editImageWithPrompt = async (base64Image: string, prompt: string, mimeType: string = "image/jpeg"): Promise<string> => {
   const payload = {
     contents: [{
       parts: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: base64Image
-          }
-        },
-        {
-          text: prompt
-        }
+        { inlineData: { mimeType, data: base64Image } },
+        { text: prompt }
       ]
     }]
   };
@@ -125,16 +81,11 @@ export const editImageWithPrompt = async (
   try {
     const data = await callGeminiApi("gemini-2.0-flash", payload);
     const parts = data.candidates?.[0]?.content?.parts || [];
-    
     for (const part of parts) {
-      if (part.inlineData && part.inlineData.data) {
-        return part.inlineData.data;
-      }
+      if (part.inlineData?.data) return part.inlineData.data;
     }
-    
     return parts[0]?.text || "No response content";
   } catch (error) {
-    console.error("Image editing error:", error);
     throw new Error("编辑图片失败。");
   }
 };
